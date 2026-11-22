@@ -6,9 +6,9 @@ Lector web moderno para **Hacker News** desarrollado íntegramente con **HTML, C
 
 ## ¿De qué se trata Bit a Bit?
 
-**Bit a Bit** transforma el feed clásico minimalista de Hacker News en una **experiencia de lectura visual orientada a tarjetas y lectura en panel deslizante**, manteniendo la ligereza y velocidad de una aplicación estática.
+**Bit a Bit** transforma el feed clásico minimalista de Hacker News en una **experiencia de lectura visual orientada a tarjetas y lectura en ventana modal**, manteniendo la ligereza y velocidad de una aplicación estática.
 
-Al pulsar cualquier tarjeta (portada, título o botón de comentarios), la noticia no te saca inmediatamente del lector: **se abre en una ventana deslizante lateral (*slide-over drawer*)** donde podés ver la ficha completa de la noticia, previsualizar el sitio web dentro del mismo panel (si el destino lo permite), acceder al enlace original con el botón **"Ir al sitio original ↗"** y leer todo el árbol de comentarios sin perder tu posición en el feed.
+Al pulsar cualquier tarjeta (portada, título o cuerpo), la noticia no te saca inmediatamente del lector: **se abre en una ventana modal centrada con scroll** donde podés leer la **noticia completa** (en **Modo lectura** limpio o **Vista web** embebida), ir a la fuente con el botón **"Ir a la página oficial ↗"** o abrir la sección de **"Ver comentarios (N)"** únicamente cuando quieras ver la discusión. Si pulsás directamente el botón de comentarios de una tarjeta, el modal abre directo en la vista de comentarios.
 
 El proyecto gira en torno a una **identidad visual binaria**:
 - **Logo en código binario**: los 8 cuadrados de la cabecera representan `01000010`, el código binario de la letra **`B`** en ASCII.
@@ -19,19 +19,22 @@ El proyecto gira en torno a una **identidad visual binaria**:
 
 ## Funcionalidades principales
 
-- **Ventana deslizante de lectura (`<dialog>`)**:
-  - Se desliza desde la derecha en escritorio (y desde abajo en pantallas móviles) con barra superior fija (*sticky*).
-  - Muestra inmediatamente portada, título, dominio, puntos, autor, antigüedad y texto de la publicación (si es *Ask HN* / *Show HN*).
-  - Incluye botón **"Ir al sitio original ↗"**, botón **"Ver en Hacker News ↗"** y la opción **"Previsualizar sitio aquí"** (`<iframe>` con atributo `sandbox`) para explorar el artículo sin salir del lector.
-  - Debajo de la noticia carga el **árbol recursivo de comentarios** con `<details>` colapsables abiertos automáticamente hasta el **nivel 3**.
-- **Secciones de Hacker News**: pestañas **Top**, **Nuevas**, **Mejores**, **Ask** y **Show** sincronizadas con la API oficial.
+- **Ventana modal de lectura (`<dialog>`)**:
+  - Ventana centrada y compacta (`min(760px, 92vw)`, `86vh` de alto máximo) con scroll interno, barras de desplazamiento personalizadas según el tema claro/oscuro y barra superior fija (*sticky*).
+  - **Modo Noticia / Video / Podcast (`openItem(id, "story")`)**: al seleccionar una tarjeta muestra título, metadatos, botón **"Ir a la página oficial ↗"**, botón **"Ver comentarios (N)"** (los comentarios no se muestran hasta que los solicites) y:
+    - En **Videos** (YouTube): reproductor embebido 16:9 directo (`youtube-nocookie.com`).
+    - En **Podcasts** (Spotify, Apple Podcasts o blogs de episodios): reproductor de audio embebido (cuando la plataforma lo soporta) junto a las notas y transcripción del episodio.
+    - En **Artículos**: selector entre **Modo lectura** (obtiene el artículo vía Jina Reader `r.jina.ai` con respaldo en `api.microlink.io`, lo convierte con `mdToHtml()` / `extractArticle()` y lo sanitiza con `clean()`) y **Vista web** (`<iframe>` con atributo `sandbox`, usado también como respaldo automático si el sitio es interactivo y no expone texto plano).
+  - **Modo Comentarios (`openItem(id, "comments")`)**: al pulsar el botón de comentarios de una tarjeta o **"Ver comentarios"**, muestra únicamente el **árbol recursivo de comentarios** con `<details>` colapsables abiertos hasta el **nivel 3** y un botón para volver a la noticia o video.
+- **Secciones de Hacker News y Multimedia**: pestañas de noticias (**Top**, **Nuevas**, **Mejores**, **Ask**, **Show**) separadas visualmente del bloque multimedia (**▶ Videos** y **🎙 Podcasts**) sobre temas de tecnología, programación e IA.
 - **Buscador integrado**: búsqueda *full-text* mediante Algolia HN Search con paginación y retorno automático a la pestaña activa al vaciar el campo.
 - **Tarjetas uniformes con portada dinámica**:
-  - Previsualización automática del sitio enlazado mediante [thum.io](https://image.thum.io/) (limpiando parámetros *query* y fragmentos de la URL antes de enviarla al servicio).
+  - Miniaturas oficiales HD (`i.ytimg.com`) para enlaces de YouTube y capturas del sitio enlazado vía [thum.io](https://image.thum.io/) para artículos (limpiando parámetros *query* y fragmentos de la URL antes de enviarla).
+  - Insignias multimedia (`▶ Video` y `🎙 Podcast`) sobre la portada cuando corresponde.
   - **Portada procedural de respaldo**: si la imagen falla o la historia no tiene URL externa, se genera un gradiente determinista basado en el hash del dominio junto a su inicial.
 - **Deep-linking compartible**: cada hilo actualiza la ruta (`#/item/ID`) para compartir enlaces directos y navegar hacia atrás o adelante con el historial del navegador (`hashchange`).
 - **Scroll infinito, caché y cancelación de red**: carga automática por lotes de 20 historias (`IntersectionObserver` + botón **"Cargar más"**), caché en memoria (`Map`) para no repetir peticiones al cambiar de pestaña y cancelación de solicitudes pendientes con `AbortController`.
-- **Tema claro/oscuro y atajos de teclado**: respeta `prefers-color-scheme`, persiste la elección en `localStorage` y permite usar **`/`** para enfocar el buscador y **`T`** (o **`Alt+T`**) para alternar el tema.
+- **Tema claro/oscuro, scrollbars y atajos de teclado**: respeta `prefers-color-scheme`, declara `color-scheme` nativo y estiliza las barras de scroll (`scrollbar-color`, `::-webkit-scrollbar`) para evitar barras blancas en modo oscuro; persiste la elección en `localStorage` y permite usar **`/`** para enfocar el buscador y **`T`** (o **`Alt+T`**) para alternar el tema.
 - **Estados de interfaz y accesibilidad**: skeletons proporcionales a las tarjetas para evitar saltos de diseño, manejo de errores con botón **"Reintentar"**, foco visible (`:focus-visible`), atributos dinámicos `aria-pressed` y `aria-busy`, regiones `aria-live="polite"` / `role="status"` y soporte para `prefers-reduced-motion`.
 
 ---
@@ -42,31 +45,33 @@ El lector utiliza una **arquitectura híbrida sin backend** combinando dos APIs 
 
 1. **Hacker News Firebase API** (`/v0/{top|new|best|ask|show}stories.json` e `/v0/item/{id}.json`):
    - Obtiene la lista de IDs de cada sección y pide los metadatos por **lotes de 20 elementos en paralelo con `Promise.all`**, resolviendo el problema N+1 de forma controlada y paginada, con caché en memoria (`itemCache` y `storyMap`).
-2. **Algolia HN Search API** (`/api/v1/search` y `/api/v1/items/{id}`):
-   - Alimenta el buscador por palabra clave.
+2. **Algolia HN Search API** (`/api/v1/search`, `/api/v1/search_by_date` y `/api/v1/items/{id}`):
+   - Alimenta el buscador por palabra clave y las secciones multimedia (**▶ Videos** y **🎙 Podcasts**) filtradas por temas publicados en Hacker News.
    - Permite descargar el **árbol completo de comentarios de una historia en una sola petición HTTP**, evitando cientos de llamadas recursivas por cada `kid` contra Firebase.
 
 ```mermaid
 flowchart LR
   UI["Interfaz (index.html + app.js)"] -->|"Tabs: Top / New / Best / Ask / Show"| FB["HN Firebase API"]
   FB -->|"Lotes de 20 con Promise.all + itemCache"| NORMF["Normalizador normF()"]
-  UI -->|"Buscador (#sf)"| ALGS["Algolia Search API"]
+  UI -->|"Buscador (#sf) + Videos / Podcasts"| ALGS["Algolia Search API"]
   ALGS -->|"Resultados paginados"| NORMA["Normalizador normA()"]
   NORMF --> CARDS["Grilla de Tarjetas (#list + storyMap)"]
   NORMA --> CARDS
-  CARDS -->|"Clic en tarjeta -> openItem(id)"| DRAWER["Ventana Deslizante (<dialog>)"]
-  DRAWER -->|"Solicita comentarios (#/item/ID)"| ALGI["Algolia Items API"]
+  CARDS -->|"Clic en tarjeta -> openItem(id, 'story')"| MODAL["Ventana Modal: Noticia / Video / Podcast / Comentarios"]
+  MODAL -->|"YouTube / Spotify / Apple"| PLAYER["Reproductor embebido"]
+  MODAL -->|"Modo lectura: r.jina.ai + microlink"| ARTICLE["Artículo sanitizado o Vista web"]
+  MODAL -->|"Clic en Ver comentarios / boton .cb"| ALGI["Algolia Items API"]
   ALGI -->|"Árbol completo en 1 petición"| CLEAN["Sanitizador clean() + comment()"]
-  CLEAN --> DRAWER
+  CLEAN --> MODAL
 ```
 
 ---
 
 ## Seguridad (Sanitización XSS)
 
-Los comentarios y textos de Hacker News contienen HTML sin procesar. Antes de insertarlos en el DOM, la función `clean()` en [`app.js`](app.js) procesa el contenido en un documento aislado con `DOMParser` siguiendo una **lista blanca estricta**:
+Los comentarios, publicaciones propias y artículos extraídos pasan por `clean()` en [`app.js`](app.js), que procesa el HTML en un documento aislado con `DOMParser` siguiendo una **lista blanca estricta**:
 
-- **Etiquetas permitidas**: `P`, `I`, `B`, `EM`, `STRONG`, `A`, `PRE`, `CODE`, `BR`. Cualquier otra etiqueta (como `<script>`, `<img>`, `<iframe>`, etc.) se reemplaza por su texto/hijos o se descarta.
+- **Etiquetas permitidas**: `P`, `I`, `B`, `EM`, `STRONG`, `A`, `PRE`, `CODE`, `BR`, `H2`, `H3`, `H4`, `UL`, `OL`, `LI`, `BLOCKQUOTE`. Cualquier otra etiqueta (como `<script>`, `<img>`, `<iframe>`, etc.) se reemplaza por su texto/hijos o se descarta.
 - **Atributos y enlaces**: se eliminan todos los atributos salvo `href` en enlaces `<a>`, validando que el protocolo sea exclusivamente `http://` o `https://` (bloqueando esquemas `javascript:`) y añadiendo `target="_blank"` y `rel="noopener noreferrer nofollow"`.
 - **Validación de URLs y escape**: `safeUrl()` valida las URLs externas de noticias antes de enlazarlas o cargarlas en el `<iframe>` embebido (`sandbox`), y `esc()` escapa cualquier campo de texto plano en las plantillas.
 
@@ -91,8 +96,8 @@ La función `bg()` en [`app.js`](app.js) renderiza el fondo matricial sobre `#bg
 
 | Archivo | Responsabilidad |
 | :--- | :--- |
-| [`index.html`](index.html) | Estructura semántica, favicon SVG binario, barra de herramientas (`.toolbar`), grilla y ventana deslizante `<dialog>`. |
-| [`style.css`](style.css) | Sistema de diseño con variables CSS, temas claro/oscuro, grilla responsive, drawer lateral/móvil, skeletons y accesibilidad. |
+| [`index.html`](index.html) | Estructura semántica, favicon SVG binario, barra de herramientas (`.toolbar`), grilla y ventana modal `<dialog>`. |
+| [`style.css`](style.css) | Sistema de diseño con variables CSS, temas claro/oscuro, grilla responsive, modal centrado, skeletons y accesibilidad. |
 | [`app.js`](app.js) | Lógica de datos, caché (`itemCache` / `storyMap`), `AbortController`, sanitizador XSS, canvas y controlador (`init()`). |
 | [`test.js`](test.js) | Suite de pruebas unitarias con `assert` nativo de Node.js. |
 | [`package.json`](package.json) | Script `npm test` y dependencia de desarrollo opcional (`jsdom`) para el test del sanitizador. |
@@ -127,7 +132,7 @@ node test.js
 
 ## Limitaciones conocidas
 
-- **Previsualización embebida (`iframe`)**: algunos sitios externos envían cabeceras `X-Frame-Options` o `Content-Security-Policy` (`frame-ancestors`) que impiden cargarlos dentro de un `<iframe>`; en esos casos podés abrirlos directamente con **"Ir al sitio original ↗"**.
+- **Modo lectura y Vista web (`iframe`)**: la lectura del artículo completo utiliza el servicio público `r.jina.ai` con respaldo en `api.microlink.io` (con límite de 6 segundos por endpoint); si un sitio bloquea ambos extractores o es una aplicación interactiva sin texto plano y además restringe marcos (`X-Frame-Options` / `CSP`), podés abrirlo directamente con **"Ir a la página oficial ↗"**.
 - **Disponibilidad de miniaturas**: las portadas dependen del servicio gratuito externo `thum.io`; ante bloqueos, límites de tasa o ausencia de URL externa, la tarjeta muestra automáticamente la portada procedural generada con el dominio.
 - **Desfase temporal en Algolia**: los puntajes y conteos de comentarios devueltos por Algolia pueden presentar una leve diferencia respecto a los valores en tiempo real de Firebase.
 - **Hilos masivos**: publicaciones con miles de comentarios anidados pueden tardar unos instantes adicionales al construir los nodos `<details>` en el DOM.

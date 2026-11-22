@@ -1,9 +1,22 @@
+/**
+ * @fileoverview Bit a Bit — Lector visual de Hacker News en JavaScript puro.
+ * Combina las APIs de Firebase HN y Algolia HN Search con modo lectura (r.jina.ai + Microlink),
+ * reproductores embebidos de video/podcast, sanitización XSS y fondo animado en canvas.
+ */
 "use strict";
 
 const API = "https://hacker-news.firebaseio.com/v0/";
 const ALG = "https://hn.algolia.com/api/v1/";
 const PAGE = 20;
-const TABS = { top: "Top", new: "Nuevas", best: "Mejores", ask: "Ask", show: "Show" };
+const TABS = {
+  top: "Top",
+  new: "Nuevas",
+  best: "Mejores",
+  ask: "Ask",
+  show: "Show",
+  video: "▶ Videos",
+  podcast: "🎙 Podcasts"
+};
 
 /**
  * Escapa caracteres especiales HTML para prevenir inyecciones en plantillas.
@@ -60,6 +73,67 @@ const safeUrl = raw => {
 };
 
 /**
+ * Extrae el ID de 11 caracteres de un enlace de YouTube (watch, youtu.be, shorts, live, embed).
+ * @param {string|undefined} u
+ * @returns {string}
+ */
+const ytId = u => {
+  if (!u) return "";
+  try {
+    const p = new URL(u);
+    const h = p.hostname.replace(/^www\./, "").toLowerCase();
+    let id = "";
+    if (h === "youtu.be") {
+      id = p.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (h === "youtube.com" || h === "m.youtube.com" || h === "youtube-nocookie.com") {
+      if (p.pathname === "/watch") {
+        id = p.searchParams.get("v") || "";
+      } else {
+        const seg = p.pathname.split("/").filter(Boolean);
+        if (seg[0] === "shorts" || seg[0] === "live" || seg[0] === "embed") {
+          id = seg[1] || "";
+        }
+      }
+    }
+    return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Detecta enlaces multimedia reproducibles (YouTube, Spotify Podcasts, Apple Podcasts)
+ * y devuelve la configuración del reproductor embebido.
+ * @param {string|undefined} u
+ * @returns {{kind: "video"|"podcast", src: string}|null}
+ */
+const mediaEmbed = u => {
+  const valid = safeUrl(u);
+  if (!valid) return null;
+  const vid = ytId(valid);
+  if (vid) {
+    return { kind: "video", src: `https://www.youtube-nocookie.com/embed/${vid}` };
+  }
+  try {
+    const p = new URL(valid);
+    const h = p.hostname.toLowerCase();
+    if (h === "open.spotify.com") {
+      const m = p.pathname.match(/\/(episode|show)\/([A-Za-z0-9]+)/);
+      if (m) return { kind: "podcast", src: `https://open.spotify.com/embed/${m[1]}/${m[2]}` };
+    }
+    if (h === "podcasts.apple.com" && p.pathname.includes("/podcast/")) {
+      return {
+        kind: "podcast",
+        src: `https://embed.podcasts.apple.com${p.pathname}${p.search}`
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+/**
  * Normaliza un ítem obtenido de la API oficial de Firebase HN.
  * @param {object|null} i
  * @returns {object|null}
@@ -96,13 +170,30 @@ const normA = h =>
     : null;
 
 /**
- * Sanitiza el HTML de un comentario mediante lista blanca de etiquetas y protocolos http(s).
+ * Sanitiza HTML (comentarios o artículos) mediante lista blanca de etiquetas y protocolos http(s).
  * @param {string} html
  * @returns {string}
  */
 function clean(html) {
   const d = new DOMParser().parseFromString(html || "", "text/html");
-  const ok = new Set(["P", "I", "B", "EM", "STRONG", "A", "PRE", "CODE", "BR"]);
+  const ok = new Set([
+    "P",
+    "I",
+    "B",
+    "EM",
+    "STRONG",
+    "A",
+    "PRE",
+    "CODE",
+    "BR",
+    "H2",
+    "H3",
+    "H4",
+    "UL",
+    "OL",
+    "LI",
+    "BLOCKQUOTE"
+  ]);
 
   (function walk(n) {
     [...n.childNodes].forEach(c => {
@@ -130,6 +221,203 @@ function clean(html) {
   })(d.body);
 
   return d.body.innerHTML;
+}
+
+/**
+ * Extrae el contenido legible principal de una página HTML externa y lo sanitiza con clean().
+ * @param {string} html
+ * @param {string} [baseUrl]
+ * @returns {string}
+ */
+function extractArticle(html, baseUrl = "") {
+  const doc = new DOMParser().parseFromString(html || "", "text/html");
+  doc
+    .querySelectorAll("script,style,noscript,nav,header,footer,aside,form,svg,iframe,button")
+    .forEach(el => el.remove());
+
+  const candidates = [...doc.querySelectorAll("article, main, [role='main']")];
+  const root =
+    candidates.sort((a, b) => b.textContent.trim().length - a.textContent.trim().length)[0] ||
+    doc.body;
+  if (!root) return "";
+
+  if (baseUrl) {
+    root.querySelectorAll("a[href]").forEach(a => {
+      try {
+        const abs = new URL(a.getAttribute("href"), baseUrl);
+        if (abs.protocol === "http:" || abs.protocol === "https:") {
+          a.setAttribute("href", abs.href);
+        }
+      } catch {
+        // Ignora enlaces relativos malformados; clean() eliminará los inválidos.
+      }
+    });
+  }
+
+  const blocks = [...root.querySelectorAll("h2,h3,h4,p,blockquote,pre,ul,ol")].filter(el => {
+    const parentBlock = el.parentElement?.closest("blockquote,pre,ul,ol");
+    if (parentBlock && root.contains(parentBlock)) return false;
+    return el.textContent.trim().length > 0;
+  });
+
+  const rawHtml = blocks.length ? blocks.map(el => el.outerHTML).join("") : root.innerHTML;
+  const sanitized = clean(rawHtml);
+  const plainLen = (
+    new DOMParser().parseFromString(sanitized, "text/html").body.textContent || ""
+  )
+    .replace(/\s+/g, " ")
+    .trim().length;
+
+  return plainLen >= 100 ? sanitized : "";
+}
+
+/**
+ * Convierte contenido Markdown limpio (encabezados, párrafos, listas, citas, enlaces y código)
+ * a HTML seguro escapando el texto con esc() y validando enlaces con safeUrl().
+ * @param {string} md
+ * @returns {string}
+ */
+function mdToHtml(md) {
+  const inline = txt => {
+    const cleaned = String(txt ?? "")
+      .replace(/\u0000/g, "")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[\s*\]\([^)]*\)/g, "");
+    const tokens = [];
+    const tokenized = cleaned.replace(
+      /`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g,
+      (_, code, label, href) => {
+        const idx = tokens.length;
+        if (code !== undefined) {
+          tokens.push(`<code>${esc(code)}</code>`);
+        } else {
+          const valid = safeUrl(href.trim());
+          tokens.push(
+            valid
+              ? `<a href="${esc(valid)}" target="_blank" rel="noopener noreferrer nofollow">${esc(label)}</a>`
+              : esc(label)
+          );
+        }
+        return `\u0000T${idx}\u0000`;
+      }
+    );
+    const formatted = esc(tokenized)
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+    return formatted.replace(/\u0000T(\d+)\u0000/g, (_, i) => tokens[+i]);
+  };
+
+  const lines = String(md || "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let inCode = false;
+  let codeBuf = [];
+  let paraBuf = [];
+  let listType = "";
+  let listItems = [];
+  let quoteBuf = [];
+
+  const flushPara = () => {
+    if (!paraBuf.length) return;
+    const html = inline(paraBuf.join(" ")).trim();
+    if (html) out.push(`<p>${html}</p>`);
+    paraBuf = [];
+  };
+  const flushList = () => {
+    if (!listItems.length) return;
+    const items = listItems.map(item => inline(item).trim()).filter(Boolean);
+    if (items.length) out.push(`<${listType}>${items.map(i => `<li>${i}</li>`).join("")}</${listType}>`);
+    listType = "";
+    listItems = [];
+  };
+  const flushQuote = () => {
+    if (!quoteBuf.length) return;
+    const html = inline(quoteBuf.join(" ")).trim();
+    if (html) out.push(`<blockquote><p>${html}</p></blockquote>`);
+    quoteBuf = [];
+  };
+  const flushAll = () => {
+    flushPara();
+    flushList();
+    flushQuote();
+  };
+
+  for (const line of lines) {
+    if (/^```/.test(line.trim())) {
+      flushAll();
+      if (!inCode) {
+        inCode = true;
+        codeBuf = [];
+      } else {
+        out.push(`<pre><code>${esc(codeBuf.join("\n"))}</code></pre>`);
+        inCode = false;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeBuf.push(line);
+      continue;
+    }
+
+    if (paraBuf.length === 1 && /^([=-])\1{2,}\s*$/.test(line)) {
+      const tag = line[0] === "=" ? "h2" : "h3";
+      const text = inline(paraBuf.pop()).trim();
+      if (text) out.push(`<${tag}>${text}</${tag}>`);
+      continue;
+    }
+
+    if (/^\s*$/.test(line) || /^[-*_]{3,}\s*$/.test(line.trim())) {
+      flushAll();
+      continue;
+    }
+
+    const h = line.match(/^(#{1,4})\s+(.+)$/);
+    if (h) {
+      flushAll();
+      const tag = "h" + Math.min(4, Math.max(2, h[1].length));
+      const text = inline(h[2].replace(/\s+#+\s*$/, "").trim()).trim();
+      if (text) out.push(`<${tag}>${text}</${tag}>`);
+      continue;
+    }
+
+    const q = line.match(/^>\s?(.*)$/);
+    if (q) {
+      flushPara();
+      flushList();
+      quoteBuf.push(q[1]);
+      continue;
+    }
+
+    const ul = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (ul) {
+      flushPara();
+      flushQuote();
+      if (listType && listType !== "ul") flushList();
+      listType = "ul";
+      listItems.push(ul[1]);
+      continue;
+    }
+
+    const ol = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (ol) {
+      flushPara();
+      flushQuote();
+      if (listType && listType !== "ol") flushList();
+      listType = "ol";
+      listItems.push(ol[1]);
+      continue;
+    }
+
+    flushList();
+    flushQuote();
+    paraBuf.push(line.trim());
+  }
+
+  if (inCode && codeBuf.length) {
+    out.push(`<pre><code>${esc(codeBuf.join("\n"))}</code></pre>`);
+  }
+  flushAll();
+  return out.join("");
 }
 
 /**
@@ -163,6 +451,36 @@ async function j(u, signal) {
   const r = await fetch(u, signal ? { signal } : undefined);
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
+}
+
+/**
+ * Realiza una petición fetch con tiempo límite sin romper una señal AbortSignal externa.
+ * @param {string} u
+ * @param {RequestInit} [opts]
+ * @param {number} [ms]
+ * @returns {Promise<Response>}
+ */
+async function fetchWithTimeout(u, opts = {}, ms = 6000) {
+  const ctrl = new AbortController();
+  const extSignal = opts.signal;
+  if (extSignal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+  const onAbort = () => ctrl.abort();
+  extSignal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(u, { ...opts, signal: ctrl.signal });
+  } catch (err) {
+    if (extSignal?.aborted) throw err;
+    if (err.name === "AbortError") throw new Error("Timeout");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    extSignal?.removeEventListener("abort", onAbort);
+  }
 }
 
 /**
@@ -381,13 +699,18 @@ function init() {
   const S = { tab: "top", q: "", ids: {}, pos: 0, page: 0, done: false, busy: false, gen: 0 };
   const read = new Set(store.get("bab-read", []));
   const itemCache = new Map();
+  const algCache = new Map();
+  const articleCache = new Map();
   const storyMap = new Map();
   let listCtrl = null;
   let dlgCtrl = null;
   let dlgToken = 0;
 
   $("tabs").innerHTML = Object.entries(TABS)
-    .map(([k, v]) => `<button type="button" data-t="${k}" aria-pressed="false">${v}</button>`)
+    .map(
+      ([k, v]) =>
+        `${k === "video" ? '<span class="tab-sep" aria-hidden="true"></span>' : ""}<button type="button" data-t="${k}" aria-pressed="false">${v}</button>`
+    )
     .join("");
 
   // Logo binario: "01000010" representa la letra 'B' en código ASCII.
@@ -414,28 +737,45 @@ function init() {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 
   /**
-   * Construye la portada visual (miniatura vía thum.io con respaldo procedural por dominio).
-   * @param {{url?: string}} s
+   * Construye la portada visual (miniatura de YouTube o thum.io con respaldo procedural)
+   * e insignia multimedia cuando corresponde a Video o Podcast.
+   * @param {{title?: string, url?: string}} s
    * @returns {string}
    */
   const cover = s => {
     const h = host(s.url);
     const hue = [...h].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
     const valid = safeUrl(s.url);
+    const vid = ytId(valid);
+    const embed = mediaEmbed(valid);
     let thumb = "";
-    if (valid) {
+    if (vid) {
+      thumb = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+    } else if (valid) {
       const u = new URL(valid);
       // Limpia query string y hash para evitar conflictos con el endpoint por ruta de thum.io.
       u.search = "";
       u.hash = "";
       thumb = `https://image.thum.io/get/width/600/crop/340/${u.href}`;
     }
-    return `<div class="cv"><div class="ph" style="--h:${hue}"><span>${esc(h.charAt(0).toUpperCase())}</span><small>${esc(h)}</small></div>${thumb ? `<img loading="lazy" alt="" src="${esc(thumb)}" onload="this.classList.add('ok')" onerror="this.remove()">` : ""}</div>`;
+
+    let badge = "";
+    if (embed?.kind === "video" || S.tab === "video") {
+      badge = '<span class="badge-media">▶ Video</span>';
+    } else if (
+      embed?.kind === "podcast" ||
+      S.tab === "podcast" ||
+      /\bpodcast\b/i.test(`${s.title || ""} ${s.url || ""}`)
+    ) {
+      badge = '<span class="badge-media">🎙 Podcast</span>';
+    }
+
+    return `<div class="cv"><div class="ph" style="--h:${hue}"><span>${esc(h.charAt(0).toUpperCase())}</span><small>${esc(h)}</small></div>${thumb ? `<img loading="lazy" alt="" src="${esc(thumb)}" onload="this.classList.add('ok')" onerror="this.remove()">` : ""}${badge}</div>`;
   };
 
   /**
-   * Genera el marcado HTML de una tarjeta de historia interactiva.
-   * Al pulsarla abre la ventana deslizante en lugar de salir directamente del sitio.
+   * Genera el marcado HTML de una tarjeta de historia o multimedia interactiva.
+   * Al pulsarla abre la ventana modal centrada en lugar de salir directamente del sitio.
    * @param {object} s
    * @param {number} i
    * @returns {string}
@@ -479,6 +819,19 @@ function init() {
     if (S.q) {
       const r = await j(
         `${ALG}search?tags=story&hitsPerPage=${PAGE}&page=${S.page}&query=${encodeURIComponent(S.q)}`,
+        signal
+      );
+      S.page++;
+      S.done = S.page >= r.nbPages;
+      return r.hits.map(normA).filter(Boolean);
+    }
+    if (S.tab === "video" || S.tab === "podcast") {
+      const params =
+        S.tab === "video"
+          ? "tags=story&numericFilters=points>10&restrictSearchableAttributes=url&query=youtube.com"
+          : "tags=story&numericFilters=points>5&restrictSearchableAttributes=title,url&query=podcast";
+      const r = await j(
+        `${ALG}search_by_date?${params}&hitsPerPage=${PAGE}&page=${S.page}`,
         signal
       );
       S.page++;
@@ -619,18 +972,135 @@ function init() {
   ).observe($("sentinel"));
 
   /**
-   * Renderiza la ficha completa de la noticia dentro de la ventana deslizante,
-   * incluyendo botones para abrir el sitio externo o previsualizarlo embebido.
+   * Obtiene y cachea el ítem completo de Algolia (texto propio y árbol de comentarios).
+   * @param {number} id
+   * @param {AbortSignal} signal
+   * @returns {Promise<object>}
+   */
+  async function fetchAlgItem(id, signal) {
+    if (algCache.has(id)) return algCache.get(id);
+    const it = await j(ALG + "items/" + id, signal);
+    if (algCache.size >= 200) algCache.delete(algCache.keys().next().value);
+    algCache.set(id, it);
+    return it;
+  }
+
+  /**
+   * Descarga y extrae el contenido legible de una noticia externa vía Jina Reader JSON
+   * con respaldo en Microlink y tiempo límite de 6 segundos por endpoint.
+   * @param {string} url
+   * @param {AbortSignal} signal
+   * @returns {Promise<string>}
+   */
+  async function fetchArticleHtml(url, signal) {
+    if (articleCache.has(url)) return articleCache.get(url);
+
+    // Intento 1 (principal): Jina Reader en JSON (rápido y con CORS para http(s) y file://).
+    try {
+      const r = await fetchWithTimeout(
+        `https://r.jina.ai/${url}`,
+        { headers: { Accept: "application/json" }, signal },
+        6000
+      );
+      if (r.ok) {
+        const data = (await r.json())?.data;
+        const md = (data?.content || data?.description || "").trim();
+        if (md) {
+          const rawHtml = mdToHtml(md);
+          const html = typeof DOMParser !== "undefined" ? clean(rawHtml) : rawHtml;
+          const plainLen = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().length;
+          if (plainLen >= 80) {
+            if (articleCache.size >= 200) articleCache.delete(articleCache.keys().next().value);
+            articleCache.set(url, html);
+            return html;
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name === "AbortError") throw err;
+    }
+
+    // Intento 2 (respaldo): Microlink HTML selector / descripción.
+    try {
+      const endpoint =
+        `https://api.microlink.io/?url=${encodeURIComponent(url)}` +
+        "&data.html.selector=article,main,body&data.html.type=html";
+      const r = await fetchWithTimeout(endpoint, { signal }, 6000);
+      if (r.ok) {
+        const data = (await r.json())?.data;
+        let html = data?.html ? extractArticle(data.html, url) : "";
+        if (!html && data?.description) {
+          html = clean(`<p>${esc(data.description)}</p>`);
+        }
+        if (html) {
+          if (articleCache.size >= 200) articleCache.delete(articleCache.keys().next().value);
+          articleCache.set(url, html);
+          return html;
+        }
+      }
+    } catch (err) {
+      if (err.name === "AbortError") throw err;
+    }
+
+    return "";
+  }
+
+  /**
+   * Determina la etiqueta de encabezado del modal según el tipo de contenido.
+   * @param {object|undefined} s
+   * @returns {"Video"|"Podcast"|"Noticia"}
+   */
+  const storyKindLabel = s => {
+    const em = mediaEmbed(s?.url);
+    if (em?.kind === "video") return "Video";
+    if (
+      em?.kind === "podcast" ||
+      S.tab === "podcast" ||
+      /\bpodcast\b/i.test(`${s?.title || ""} ${s?.url || ""}`)
+    ) {
+      return "Podcast";
+    }
+    return "Noticia";
+  };
+
+  /**
+   * Construye la cabecera de la ventana modal según el modo ("story" o "comments").
    * @param {object} s
-   * @param {string} [textHtml]
+   * @param {"story"|"comments"} view
    * @returns {string}
    */
-  const renderStoryShell = (s, textHtml = "") => {
+  const renderModalHead = (s, view) => {
     const extUrl = safeUrl(s.url);
+    const embed = mediaEmbed(extUrl);
     const hnUrl = `https://news.ycombinator.com/item?id=${s.id}`;
     const ageText = s.time ? `hace ${ago(s.time)}` : "";
+
+    const actions =
+      view === "story"
+        ? `${
+            extUrl
+              ? `<a class="btn-primary" href="${esc(extUrl)}" target="_blank" rel="noopener noreferrer">Ir a la página oficial ↗</a>`
+              : ""
+          }
+           <button type="button" class="${extUrl ? "btn-ghost" : "btn-primary"}" id="btn-comments">Ver comentarios (${s.comments ?? 0})</button>
+           <a class="btn-ghost" href="${hnUrl}" target="_blank" rel="noopener noreferrer">Ver en Hacker News ↗</a>`
+        : `<button type="button" class="btn-primary" id="btn-story">${embed?.kind === "video" ? "Ver video" : "Leer noticia"}</button>
+           ${
+             extUrl
+               ? `<a class="btn-ghost" href="${esc(extUrl)}" target="_blank" rel="noopener noreferrer">Ir a la página oficial ↗</a>`
+               : ""
+           }
+           <a class="btn-ghost" href="${hnUrl}" target="_blank" rel="noopener noreferrer">Ver en Hacker News ↗</a>`;
+
+    const modeSwitch =
+      view === "story" && extUrl && embed?.kind !== "video"
+        ? `<div class="mode-switch" role="group" aria-label="Modo de visualización">
+             <button type="button" id="mode-reader" class="on" aria-pressed="true">Modo lectura</button>
+             <button type="button" id="mode-web" aria-pressed="false">Vista web</button>
+           </div>`
+        : "";
+
     return `<article class="story-view">
-      <div class="story-cover">${cover(s)}</div>
       <h2>${esc(s.title || "Sin título")}</h2>
       <div class="story-meta">
         <span>${esc(host(extUrl))}</span>
@@ -638,67 +1108,197 @@ function init() {
         <span>por ${esc(s.author || "anónimo")}</span>
         ${ageText ? `<span>${ageText}</span>` : ""}
       </div>
-      <div class="story-actions">
-        ${
-          extUrl
-            ? `<a class="btn-primary" href="${esc(extUrl)}" target="_blank" rel="noopener noreferrer">Ir al sitio original ↗</a>
-               <button type="button" class="btn-ghost" id="toggle-frame" aria-expanded="false">Previsualizar sitio aquí</button>`
-            : ""
-        }
-        <a class="${extUrl ? "btn-ghost" : "btn-primary"}" href="${hnUrl}" target="_blank" rel="noopener noreferrer">Ver en Hacker News ↗</a>
-      </div>
-      ${textHtml ? `<div class="story-text tx">${textHtml}</div>` : ""}
-      ${extUrl ? `<div id="frame-slot" class="story-frame-wrap" hidden></div>` : ""}
+      <div class="story-actions">${actions}</div>
+      ${modeSwitch}
     </article>`;
   };
 
   /**
-   * Conecta el botón de previsualización web embebida dentro de la ventana deslizante.
-   * @param {string} extUrl
-   */
-  const bindFrameToggle = extUrl => {
-    const btn = $("toggle-frame");
-    const slot = $("frame-slot");
-    if (!btn || !slot || !extUrl) return;
-    btn.onclick = () => {
-      const open = slot.hidden;
-      slot.hidden = !open;
-      btn.setAttribute("aria-expanded", String(open));
-      btn.textContent = open ? "Ocultar previsualización" : "Previsualizar sitio aquí";
-      if (open && !slot.firstChild) {
-        slot.innerHTML = `<iframe class="story-frame" src="${esc(extUrl)}" title="${esc("Previsualización de " + host(extUrl))}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading="lazy" referrerpolicy="no-referrer"></iframe>
-          <p class="frame-note">Nota: algunos sitios bloquean su carga dentro de marcos embebidos por seguridad; si ves el recuadro vacío, usá «Ir al sitio original ↗».</p>`;
-      }
-    };
-  };
-
-  /**
-   * Abre la ventana deslizante con el detalle de la noticia y carga su árbol de comentarios.
+   * Abre la ventana modal en modo "story" (noticia/video/podcast) o "comments" (solo comentarios).
    * @param {number} id
+   * @param {"story"|"comments"} [view]
    */
-  async function openItem(id) {
+  async function openItem(id, view = "story") {
     if (dlgCtrl) dlgCtrl.abort();
     const ctrl = new AbortController();
     dlgCtrl = ctrl;
     const token = ++dlgToken;
     const known = storyMap.get(id);
 
-    if (known) {
-      body.innerHTML = `${renderStoryShell(known)}<section id="dlg-comments" class="comments-sec"><p>Cargando comentarios…</p></section>`;
-      bindFrameToggle(safeUrl(known.url));
-    } else {
-      body.innerHTML = `<section id="dlg-comments"><p>Cargando noticia y comentarios…</p></section>`;
-    }
-
+    $("dlg-title").textContent = view === "comments" ? "Comentarios" : storyKindLabel(known);
     if (!dlg.open) dlg.showModal();
     dlg.scrollTop = 0;
-    if (location.hash !== `#/item/${id}`) {
-      history.pushState(null, "", `#/item/${id}`);
+
+    const targetHash = view === "comments" ? `#/item/${id}/comments` : `#/item/${id}`;
+    if (location.hash !== targetHash) {
+      history.pushState(null, "", targetHash);
     }
     markRead(id);
 
+    let activeMode = "reader";
+    let articleLoaded = false;
+    let cachedArticle = "";
+
+    const renderStoryBody = s => {
+      const extUrl = safeUrl(s.url);
+      const embed = mediaEmbed(extUrl);
+
+      if (embed?.kind === "video") {
+        body.innerHTML = `${renderModalHead(s, "story")}
+          <div id="story-content">
+            <iframe class="video-player" src="${esc(embed.src)}" title="${esc(s.title || "Reproductor de video")}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+          </div>
+          <div id="story-hn-text"></div>`;
+        $("btn-comments").onclick = () => openItem(id, "comments");
+        return;
+      }
+
+      const podcastPlayer =
+        embed?.kind === "podcast"
+          ? `<div id="podcast-slot"><iframe class="podcast-player" src="${esc(embed.src)}" title="${esc(s.title || "Reproductor de podcast")}" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe></div>`
+          : "";
+
+      body.innerHTML = `${renderModalHead(s, "story")}
+        ${podcastPlayer}
+        <div id="story-hn-text"></div>
+        <div id="story-content">${extUrl ? '<p class="m">Cargando contenido completo…</p>' : ""}</div>`;
+
+      $("btn-comments").onclick = () => openItem(id, "comments");
+
+      if (!extUrl) return;
+
+      const btnReader = $("mode-reader");
+      const btnWeb = $("mode-web");
+      const content = $("story-content");
+
+      const showWeb = note => {
+        content.innerHTML = `<div class="story-frame-wrap">
+          <iframe class="story-frame" src="${esc(extUrl)}" title="${esc("Vista web de " + host(extUrl))}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading="lazy" referrerpolicy="no-referrer"></iframe>
+          <p class="frame-note">${esc(note || "Algunos sitios bloquean la carga en marcos embebidos por seguridad; si ves el recuadro vacío, usá «Ir a la página oficial ↗».")}</p>
+        </div>`;
+      };
+
+      const setMode = (mode, note = "") => {
+        activeMode = mode;
+        btnReader.classList.toggle("on", mode === "reader");
+        btnReader.setAttribute("aria-pressed", String(mode === "reader"));
+        btnWeb.classList.toggle("on", mode === "web");
+        btnWeb.setAttribute("aria-pressed", String(mode === "web"));
+
+        if (mode === "web") {
+          showWeb(note);
+        } else if (articleLoaded) {
+          content.innerHTML = cachedArticle
+            ? `<div class="reader-body tx">${cachedArticle}</div>`
+            : '<p class="m">No se pudo extraer texto legible de esta página. Probá con «Vista web» o «Ir a la página oficial ↗».</p>';
+        } else {
+          content.innerHTML = '<p class="m">Cargando contenido completo…</p>';
+        }
+      };
+
+      btnReader.onclick = () => setMode("reader");
+      btnWeb.onclick = () => setMode("web");
+
+      fetchArticleHtml(extUrl, ctrl.signal)
+        .then(html => {
+          if (token !== dlgToken) return;
+          articleLoaded = true;
+          cachedArticle = html;
+          if (activeMode !== "reader") return;
+          if (html) {
+            content.innerHTML = `<div class="reader-body tx">${html}</div>`;
+          } else if (embed?.kind === "podcast") {
+            content.innerHTML =
+              '<p class="m">Reproducí el episodio arriba o usá «Vista web» / «Ir a la página oficial ↗».</p>';
+          } else {
+            setMode(
+              "web",
+              "Esta página no expone un artículo de texto plano; mostrando Vista web integrada."
+            );
+          }
+        })
+        .catch(err => {
+          if (err.name === "AbortError" || token !== dlgToken) return;
+          articleLoaded = true;
+          cachedArticle = "";
+          if (activeMode !== "reader") return;
+          if (embed?.kind === "podcast") {
+            content.innerHTML =
+              '<p class="m">Reproducí el episodio arriba o usá «Ir a la página oficial ↗» para ver notas adicionales.</p>';
+          } else {
+            setMode("web", "No se pudo cargar el modo lectura; mostrando Vista web integrada.");
+          }
+        });
+    };
+
+    const renderCommentsBody = (s, it) => {
+      if (!$("dlg-comments")) {
+        body.innerHTML = `${renderModalHead(s, "comments")}<section id="dlg-comments" class="comments-sec"></section>`;
+        $("btn-story").onclick = () => openItem(id, "story");
+      }
+      const kids = (it.children || []).map(c => comment(c)).join("");
+      $("dlg-comments").innerHTML =
+        `<h3>${countC(it)} comentarios</h3>${kids || "<p>Todavía no hay comentarios.</p>"}`;
+    };
+
+    if (view === "story") {
+      if (known) {
+        renderStoryBody(known);
+      } else {
+        body.innerHTML = '<p class="m">Cargando contenido…</p>';
+      }
+
+      try {
+        const it = await fetchAlgItem(id, ctrl.signal);
+        if (token !== dlgToken) return;
+
+        const totalComments = countC(it);
+        const merged = {
+          id,
+          title: it.title || known?.title || "Sin título",
+          url: it.url || known?.url || "",
+          points: it.points ?? known?.points ?? 0,
+          author: it.author || known?.author || "",
+          time: it.created_at_i ?? known?.time ?? 0,
+          comments: known?.comments ?? totalComments
+        };
+        storyMap.set(id, merged);
+        $("dlg-title").textContent = storyKindLabel(merged);
+
+        if (!known) renderStoryBody(merged);
+
+        const cBtn = $("btn-comments");
+        if (cBtn) cBtn.textContent = `Ver comentarios (${totalComments})`;
+
+        const hnText = $("story-hn-text");
+        const textHtml = it.text ? clean(it.text) : "";
+        if (hnText && textHtml) {
+          hnText.innerHTML = `<div class="reader-body tx">${textHtml}</div>`;
+        } else if (!safeUrl(merged.url) && !textHtml && $("story-content")) {
+          $("story-content").innerHTML =
+            '<p class="m">Esta publicación no incluye texto ni enlace externo. Podés revisar los comentarios con el botón superior.</p>';
+        }
+      } catch (e) {
+        if (e.name === "AbortError" || token !== dlgToken) return;
+        if (!known) {
+          body.innerHTML =
+            '<p class="err">No se pudo cargar la noticia. <button type="button" id="rc">Reintentar</button></p>';
+          $("rc").onclick = () => openItem(id, "story");
+        }
+      }
+      return;
+    }
+
+    // Modo "comments": muestra únicamente el hilo de comentarios (con opción para volver a la noticia).
+    if (known) {
+      body.innerHTML = `${renderModalHead(known, "comments")}<section id="dlg-comments" class="comments-sec"><p class="m">Cargando comentarios…</p></section>`;
+      $("btn-story").onclick = () => openItem(id, "story");
+    } else {
+      body.innerHTML = '<section id="dlg-comments"><p class="m">Cargando comentarios…</p></section>';
+    }
+
     try {
-      const it = await j(ALG + "items/" + id, ctrl.signal);
+      const it = await fetchAlgItem(id, ctrl.signal);
       if (token !== dlgToken) return;
 
       const merged = {
@@ -711,53 +1311,40 @@ function init() {
         comments: known?.comments ?? countC(it)
       };
       storyMap.set(id, merged);
-      const textHtml = it.text ? clean(it.text) : "";
-
-      if (!known) {
-        body.innerHTML = `${renderStoryShell(merged, textHtml)}<section id="dlg-comments" class="comments-sec"></section>`;
-        bindFrameToggle(safeUrl(merged.url));
-      } else if (textHtml) {
-        const view = body.querySelector(".story-view");
-        if (view && !view.querySelector(".story-text")) {
-          const slot = $("frame-slot");
-          const html = `<div class="story-text tx">${textHtml}</div>`;
-          if (slot) slot.insertAdjacentHTML("beforebegin", html);
-          else view.insertAdjacentHTML("beforeend", html);
-        }
-      }
-
-      const kids = (it.children || []).map(c => comment(c)).join("");
-      $("dlg-comments").innerHTML =
-        `<h3>${countC(it)} comentarios</h3>${kids || "<p>Todavía no hay comentarios.</p>"}`;
+      renderCommentsBody(merged, it);
     } catch (e) {
       if (e.name === "AbortError" || token !== dlgToken) return;
       const target = $("dlg-comments") || body;
       target.innerHTML =
         '<p class="err">No se pudieron cargar los comentarios. <button type="button" id="rc">Reintentar</button></p>';
-      $("rc").onclick = () => openItem(id);
+      $("rc").onclick = () => openItem(id, "comments");
     }
   }
 
   /**
-   * Sincroniza la apertura o cierre del panel deslizante según el hash actual de la URL.
+   * Sincroniza la apertura o cierre de la ventana modal según el hash actual de la URL.
    */
   const syncHash = () => {
-    const m = location.hash.match(/^#\/item\/(\d+)/);
+    const m = location.hash.match(/^#\/item\/(\d+)(\/comments)?/);
     if (m) {
-      openItem(+m[1]);
+      openItem(+m[1], m[2] ? "comments" : "story");
     } else if (dlg.open) {
       dlg.close();
     }
   };
 
   list.onclick = e => {
+    const commentBtn = e.target.closest("[data-c]");
+    if (commentBtn) return openItem(+commentBtn.dataset.c, "comments");
+
     const link = e.target.closest("a.t");
     if (link) {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       e.preventDefault();
     }
+
     const cardEl = e.target.closest(".s");
-    if (cardEl) openItem(+cardEl.dataset.id);
+    if (cardEl) openItem(+cardEl.dataset.id, "story");
   };
 
   $("close").onclick = () => dlg.close();
@@ -804,5 +1391,19 @@ function init() {
 if (typeof document !== "undefined") {
   init();
 } else {
-  module.exports = { esc, ago, host, safeUrl, normF, normA, comment, countC, clean };
+  module.exports = {
+    esc,
+    ago,
+    host,
+    safeUrl,
+    normF,
+    normA,
+    comment,
+    countC,
+    clean,
+    extractArticle,
+    mdToHtml,
+    ytId,
+    mediaEmbed
+  };
 }

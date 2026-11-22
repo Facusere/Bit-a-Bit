@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bit a Bit · Hacker News</title>
-  <meta name="description" content="Lector visual de Hacker News con ventana deslizante de noticias, comentarios anidados, búsqueda y modo oscuro.">
+  <meta name="description" content="Lector visual de Hacker News con ventana modal de noticias, comentarios anidados, búsqueda y modo oscuro.">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b3df5'/%3E%3Crect x='7' y='11' width='7' height='10' rx='2' fill='none' stroke='%23fff' stroke-width='2.5'/%3E%3Crect x='18' y='11' width='7' height='10' rx='2' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -46,7 +46,7 @@
     <button id="more" type="button" hidden>Cargar más</button>
   </main>
 
-  <!-- Ventana deslizante lateral (drawer) para leer la noticia y sus comentarios -->
+  <!-- Ventana modal centrada con scroll para leer la noticia y sus comentarios -->
   <dialog id="dlg" aria-labelledby="dlg-title">
     <div class="dlg-bar">
       <span id="dlg-title" class="dlg-label">Detalle de la noticia</span>
