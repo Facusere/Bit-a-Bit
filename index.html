@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <!-- Metadatos base, viewport responsive y favicon SVG binario inline -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bit a Bit · Hacker News</title>
+  <meta name="description" content="Lector visual de Hacker News con ventana deslizante de noticias, comentarios anidados, búsqueda y modo oscuro.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b3df5'/%3E%3Crect x='7' y='11' width='7' height='10' rx='2' fill='none' stroke='%23fff' stroke-width='2.5'/%3E%3Crect x='18' y='11' width='7' height='10' rx='2' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Lienzo fijo de fondo animado con matriz binaria de ceros y unos -->
+  <canvas id="bg" aria-hidden="true"></canvas>
+
+  <!-- Cabecera principal: logotipo binario ('B' en ASCII), título y selector de tema -->
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div class="title-group">
+        <h1>Bit a Bit</h1>
+        <p class="tag">Lector visual de Hacker News</p>
+      </div>
+    </div>
+    <button id="theme" type="button" aria-keyshortcuts="t" title="Cambiar tema (T)"></button>
+  </header>
+
+  <!-- Contenido principal: barra de secciones + búsqueda, estado y grilla de noticias -->
+  <main>
+    <div class="toolbar">
+      <nav id="tabs" aria-label="Secciones"></nav>
+      <form id="sf" role="search">
+        <input id="q" type="search" placeholder="Buscar en Hacker News ( / )" aria-label="Buscar" aria-keyshortcuts="/" title="Enfocar búsqueda (/)">
+        <button type="submit">Buscar</button>
+      </form>
+    </div>
+
+    <!-- Mensajes de estado, resultados de búsqueda y errores con reintento -->
+    <p id="status" role="status"></p>
+
+    <!-- Grilla responsive de tarjetas de noticias -->
+    <section id="list" aria-live="polite" aria-busy="false"></section>
+
+    <!-- Centinela para scroll infinito y botón manual de carga adicional -->
+    <div id="sentinel" aria-hidden="true"></div>
+    <button id="more" type="button" hidden>Cargar más</button>
+  </main>
+
+  <!-- Ventana deslizante lateral (drawer) para leer la noticia y sus comentarios -->
+  <dialog id="dlg" aria-labelledby="dlg-title">
+    <div class="dlg-bar">
+      <span id="dlg-title" class="dlg-label">Detalle de la noticia</span>
+      <button id="close" type="button">Cerrar ✕</button>
+    </div>
+    <div id="dbody"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

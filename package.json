@@ -1,0 +1,12 @@
+{
+  "name": "bit-a-bit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lector visual de Hacker News en HTML, CSS y JavaScript puro (Zero-Dependencies).",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0"
+  }
+}
