@@ -2,6 +2,8 @@
 
 Lector web moderno para **Hacker News** desarrollado íntegramente con **HTML, CSS y JavaScript puro** (*Zero-Dependencies*): sin bundlers, sin frameworks, sin paso de compilación y sin base de datos propia.
 
+🔗 **Demo en vivo (Vercel):** [https://bit-a-bit-eight.vercel.app](https://bit-a-bit-eight.vercel.app)
+
 ---
 
 ## ¿De qué se trata Bit a Bit?
@@ -107,7 +109,7 @@ La función `bg()` en [`app.js`](app.js) renderiza el fondo matricial sobre `#bg
 
 ## Cómo ejecutarlo
 
-Al ser un proyecto estático, podés iniciarlo de cualquiera de estas maneras:
+Podés probar la aplicación directamente en línea en **[https://bit-a-bit-eight.vercel.app](https://bit-a-bit-eight.vercel.app)** o iniciarla en local al ser un proyecto estático:
 
 1. **Directamente en el navegador**: abrí [`index.html`](index.html).
 2. **Con servidor local** (recomendado):
